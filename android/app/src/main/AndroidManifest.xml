@@ -2,7 +2,6 @@
 
     <application
         android:label="JARVIS"
-        android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true">
 
         <activity
@@ -23,9 +22,3 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-
-        <meta-data
-            android:name="flutterEmbedding"
-            android:value="2"/>
-    </application>
-</manifest>

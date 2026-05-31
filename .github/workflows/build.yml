@@ -1,3 +1,4 @@
+
 name: Build JARVIS APK
 
 on:
@@ -22,11 +23,140 @@ jobs:
           flutter-version: '3.19.6'
           channel: 'stable'
 
-      - run: flutter pub get
+      - name: Create local.properties
+        run: |
+          echo "flutter.sdk=$(which flutter | sed 's|/bin/flutter||')" > android/local.properties
+          echo "flutter.versionCode=1" >> android/local.properties
+          echo "flutter.versionName=1.0" >> android/local.properties
 
-      - run: flutter build apk --release
+      - name: Create gradle.properties
+        run: |
+          echo "org.gradle.jvmargs=-Xmx4G" > android/gradle.properties
+          echo "android.useAndroidX=true" >> android/gradle.properties
+          echo "android.enableJetifier=true" >> android/gradle.properties
 
-      - uses: actions/upload-artifact@v4
+      - name: Fix android/build.gradle
+        run: |
+          cat > android/build.gradle << 'GRADLE'
+          buildscript {
+              ext.kotlin_version = '1.7.10'
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:7.3.0'
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.buildDir = '../build'
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+              project.evaluationDependsOn(':app')
+          }
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
+          GRADLE
+
+      - name: Fix app/build.gradle
+        run: |
+          cat > android/app/build.gradle << 'APPGRADLE'
+          def localProperties = new Properties()
+          def localPropertiesFile = rootProject.file('local.properties')
+          if (localPropertiesFile.exists()) {
+              localPropertiesFile.withReader('UTF-8') { reader -> localProperties.load(reader) }
+          }
+          def flutterRoot = localProperties.getProperty('flutter.sdk')
+          if (flutterRoot == null) { throw new GradleException("Flutter SDK not found.") }
+          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+          if (flutterVersionCode == null) { flutterVersionCode = '1' }
+          def flutterVersionName = localProperties.getProperty('flutter.versionName')
+          if (flutterVersionName == null) { flutterVersionName = '1.0' }
+          apply plugin: 'com.android.application'
+          apply plugin: 'kotlin-android'
+          apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+          android {
+              namespace "com.jarvis.app"
+              compileSdkVersion 33
+              sourceSets { main.java.srcDirs += 'src/main/kotlin' }
+              defaultConfig {
+                  applicationId "com.jarvis.app"
+                  minSdkVersion 21
+                  targetSdkVersion 33
+                  versionCode flutterVersionCode.toInteger()
+                  versionName flutterVersionName
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.debug
+                      minifyEnabled false
+                      shrinkResources false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_11
+                  targetCompatibility JavaVersion.VERSION_11
+              }
+              kotlinOptions { jvmTarget = '11' }
+          }
+          flutter { source '../..' }
+          APPGRADLE
+
+      - name: Fix gradle wrapper
+        run: |
+          mkdir -p android/gradle/wrapper
+          cat > android/gradle/wrapper/gradle-wrapper.properties << 'WRAPPER'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-all.zip
+          WRAPPER
+
+      - name: Fix AndroidManifest
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'MANIFEST'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="JARVIS"
+                  android:enableOnBackInvokedCallback="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme"/>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data android:name="flutterEmbedding" android:value="2"/>
+              </application>
+          </manifest>
+          MANIFEST
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: JARVIS-APK
           path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
